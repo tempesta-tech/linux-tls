@@ -33,8 +33,8 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 #include <linux/bitops.h>
+#include <net/tls/bignum.h>
 
-#include "bignum.h"
 #include "mpool.h"
 #include "tls_internal.h"
 

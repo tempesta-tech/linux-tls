@@ -23,10 +23,10 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 #include <linux/types.h>
+#include <net/tls/bignum_asm.h>
+#include <net/tls/ecp.h>
 
 #include "tls_internal.h"
-#include "bignum_asm.h"
-#include "ecp.h"
 #include "mpool.h"
 
 /*

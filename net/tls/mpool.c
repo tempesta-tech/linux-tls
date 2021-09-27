@@ -36,11 +36,11 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 #include <linux/preempt.h>
+#include <net/tls/bignum.h>
+#include <net/tls/ciphersuites.h>
+#include <net/tls/dhm.h>
+#include <net/tls/ecp.h>
 
-#include "bignum.h"
-#include "ciphersuites.h"
-#include "dhm.h"
-#include "ecp.h"
 #include "mpool.h"
 
 #define MPI_POOL_DATA(mp)	((void *)((char *)(mp) + sizeof(TlsMpiPool)))

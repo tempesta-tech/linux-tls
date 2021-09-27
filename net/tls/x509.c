@@ -31,13 +31,14 @@
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
-#include "ttls.h"
-#include "asn1.h"
+#include <net/tls_hs.h>
+#include <net/tls/asn1.h>
+#include <net/tls/x509.h>
+#include <net/tls/x509_crt.h>
+
 #include "oid.h"
 #include "pem.h"
 #include "tls_internal.h"
-#include "x509.h"
-#include "x509_crt.h"
 
 #define CHECK(code) if ((ret = code) != 0){ return ret; }
 #define CHECK_RANGE(min, max, val) if (val < min || val > max){ return ret; }

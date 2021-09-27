@@ -24,8 +24,9 @@
  */
 #include <linux/slab.h>
 
-#include "asn1.h"
-#include "bignum.h"
+#include <net/tls/asn1.h>
+#include <net/tls/bignum.h>
+
 #include "tls_internal.h"
 
 /**

@@ -29,8 +29,8 @@
  */
 #ifndef TTLS_RSA_H
 #define TTLS_RSA_H
-#include "crypto.h"
-#include "bignum.h"
+#include <net/tls/crypto.h>
+#include <net/tls/bignum.h>
 
 /*
  * RSA Error codes

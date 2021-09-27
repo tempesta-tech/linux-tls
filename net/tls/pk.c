@@ -26,10 +26,11 @@
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
-#include "ecp.h"
+#include <net/tls/ecp.h>
+#include <net/tls/pk.h>
+#include <net/tls/rsa.h>
+
 #include "mpool.h"
-#include "pk.h"
-#include "rsa.h"
 #include "tls_internal.h"
 
 #define __MPOOL_PK_ORDER	1 /* We need 2 pages to handle RSA-4096 keys */

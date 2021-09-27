@@ -22,16 +22,17 @@
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
-#include "bignum.h"
-#include "crypto.h"
-#include "dhm.h"
-#include "ecp.h"
+#include <net/tls_hs.h>
+#include <net/tls/bignum.h>
+#include <net/tls/crypto.h>
+#include <net/tls/dhm.h>
+#include <net/tls/ecp.h>
+#include <net/tls/pk.h>
+#include <net/tls/rsa.h>
+#include <net/tls/x509.h>
+
 #include "oid.h"
 #include "pem.h"
-#include "pk.h"
-#include "rsa.h"
-#include "ttls.h"
-#include "x509.h"
 
 /*
  * TODO the function must be removed. All the descriptions must be moved to

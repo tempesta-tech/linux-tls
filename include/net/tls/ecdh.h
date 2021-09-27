@@ -32,8 +32,8 @@
 #ifndef TTLS_ECDH_H
 #define TTLS_ECDH_H
 
-#include "bignum.h"
-#include "ecp.h"
+#include <net/tls/bignum.h>
+#include <net/tls/ecp.h>
 
 /**
  * Defines the source of the imported EC key: our key or the key of the peer.

@@ -30,12 +30,12 @@
 #include <linux/timer.h>
 #include <net/tls.h>
 
-#include "ciphersuites.h"
-#include "ecp.h"
-#include "x509_crt.h"
-#include "x509_crl.h"
-#include "dhm.h"
-#include "ecdh.h"
+#include <net/tls/ciphersuites.h>
+#include <net/tls/ecp.h>
+#include <net/tls/x509_crt.h>
+#include <net/tls/x509_crl.h>
+#include <net/tls/dhm.h>
+#include <net/tls/ecdh.h>
 
 /* The requested feature is not available. */
 #define TTLS_ERR_FEATURE_UNAVAILABLE		-0x7080

@@ -21,8 +21,8 @@
  */
 #include <crypto/aead.h>
 #include <net/tls.h>
+#include <net/tls/crypto.h>
 
-#include "crypto.h"
 #include "tls_internal.h"
 
 /*

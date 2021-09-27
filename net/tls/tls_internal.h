@@ -25,12 +25,13 @@
 #ifndef TTLS_INTERNAL_H
 #define TTLS_INTERNAL_H
 
+#include <net/tls_hs.h>
+
 #include <linux/types.h>
 #include <asm/fpu/api.h>
 
-#include "crypto.h"
-#include "ttls.h"
-#include "x509_crt.h"
+#include <net/tls/crypto.h>
+#include <net/tls/x509_crt.h>
 
 struct aead_request *ttls_aead_req_alloc(struct crypto_aead *tfm);
 void ttls_aead_req_free(struct crypto_aead *tfm, struct aead_request *req);

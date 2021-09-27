@@ -23,7 +23,7 @@
 #ifndef TTLS_TICKET_H
 #define TTLS_TICKET_H
 
-#include "crypto.h"
+#include <net/tls/crypto.h>
 
 int ttls_ticket_write(TlsCtx *ctx, unsigned char *buf,
 		      size_t buf_sz, size_t *tlen,

@@ -27,7 +27,7 @@
 
 #include <linux/random.h>
 
-#include "bignum_asm.h"
+#include <net/tls/bignum_asm.h>
 
 #define TTLS_MPI_CHK(f)							\
 do {									\

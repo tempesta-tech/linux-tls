@@ -55,7 +55,7 @@
 #ifndef TTLS_DHM_H
 #define TTLS_DHM_H
 
-#include "bignum.h"
+#include <net/tls/bignum.h>
 
 /*
  * DHM Error codes

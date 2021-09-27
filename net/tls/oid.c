@@ -22,9 +22,10 @@
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
+#include <net/tls/rsa.h>
+#include <net/tls/x509.h>
+
 #include "oid.h"
-#include "rsa.h"
-#include "x509.h"
 
 /*
  * Macro to automatically add the size of #define'd OIDs

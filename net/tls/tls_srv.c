@@ -22,11 +22,12 @@
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
-#include "ecp.h"
+#include <net/tls_hs.h>
+#include <net/tls/ecp.h>
+
 #include "fsm.h"
 #include "mpool.h"
 #include "tls_internal.h"
-#include "ttls.h"
 #include "tls_ticket.h"
 
 ttls_sni_cb_t *ttls_sni_cb;

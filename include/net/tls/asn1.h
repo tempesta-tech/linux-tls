@@ -25,7 +25,7 @@
 #ifndef __TTLS_ASN1_H__
 #define __TTLS_ASN1_H__
 
-#include "bignum.h"
+#include <net/tls/bignum.h>
 
 /**
  * ASN1 Error codes

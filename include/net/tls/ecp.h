@@ -57,7 +57,7 @@
 #ifndef TTLS_ECP_H
 #define TTLS_ECP_H
 
-#include "bignum.h"
+#include <net/tls/bignum.h>
 
 /*
  * ECP error codes

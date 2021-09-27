@@ -23,8 +23,8 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 #include <crypto/aead.h>
+#include <net/tls_hs.h>
 
-#include "ttls.h"
 #include "tls_ticket.h"
 #include "tls_internal.h"
 

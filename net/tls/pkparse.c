@@ -22,12 +22,13 @@
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
-#include "pk.h"
-#include "asn1.h"
+#include <net/tls/pk.h>
+#include <net/tls/asn1.h>
+#include <net/tls/rsa.h>
+#include <net/tls/ecp.h>
+
 #include "mpool.h"
 #include "oid.h"
-#include "rsa.h"
-#include "ecp.h"
 #include "pem.h"
 #include "tls_internal.h"
 

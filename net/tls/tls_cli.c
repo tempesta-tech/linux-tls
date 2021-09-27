@@ -22,11 +22,12 @@
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
+#include <net/tls_hs.h>
+
 #include "fsm.h"
 
 #if 0 /* TODO #769 Full TLS proxying */
 
-#include "ttls.h"
 #include "tls_internal.h"
 
 static void ssl_write_hostname_ext(TlsCtx *ssl,

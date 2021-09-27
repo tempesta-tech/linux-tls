@@ -30,13 +30,13 @@
 #include <crypto/algapi.h>
 #include <linux/module.h>
 #include <net/tls.h>
+#include <net/tls_hs.h>
+#include <net/tls/crypto.h>
 
-#include "crypto.h"
 #include "fsm.h"
 #include "mpool.h"
 #include "oid.h"
 #include "tls_internal.h"
-#include "ttls.h"
 #include "tls_ticket.h"
 
 MODULE_AUTHOR("Tempesta Technologies, Inc");

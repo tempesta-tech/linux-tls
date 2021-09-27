@@ -24,10 +24,10 @@
  */
 #ifndef TTLS_OID_H
 #define TTLS_OID_H
-#include "asn1.h"
-#include "pk.h"
-#include "crypto.h"
-#include "x509.h"
+#include <net/tls/pk.h>
+#include <net/tls/asn1.h>
+#include <net/tls/crypto.h>
+#include <net/tls/x509.h>
 
 #define TTLS_ERR_OID_NOT_FOUND			 -0x002E  /**< OID is not found. */
 #define TTLS_ERR_OID_BUF_TOO_SMALL		 -0x000B  /**< output buffer is too small */

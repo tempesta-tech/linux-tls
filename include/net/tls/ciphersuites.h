@@ -25,9 +25,9 @@
 #ifndef TTLS_CIPHERSUITES_H
 #define TTLS_CIPHERSUITES_H
 
-#include "bignum.h"
-#include "crypto.h"
-#include "pk.h"
+#include <net/tls/bignum.h>
+#include <net/tls/crypto.h>
+#include <net/tls/pk.h>
 
 /*
  * Supported ciphersuites and/or recommended by IANA ciphersuites

@@ -41,11 +41,11 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 #include <linux/random.h>
+#include <net/tls/crypto.h>
+#include <net/tls/rsa.h>
 
-#include "crypto.h"
 #include "mpool.h"
 #include "oid.h"
-#include "rsa.h"
 #include "tls_internal.h"
 
 /* constant-time buffer comparison */

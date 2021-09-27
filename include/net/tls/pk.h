@@ -25,9 +25,9 @@
 #ifndef TTLS_PK_H
 #define TTLS_PK_H
 
-#include "crypto.h"
-#include "rsa.h"
-#include "ecp.h"
+#include <net/tls/crypto.h>
+#include <net/tls/rsa.h>
+#include <net/tls/ecp.h>
 
 /* Memory allocation failed. */
 #define TTLS_ERR_PK_ALLOC_FAILED	-0x3F80
