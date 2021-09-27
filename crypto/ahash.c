@@ -559,6 +559,25 @@ struct crypto_ahash *crypto_alloc_ahash(const char *alg_name, u32 type,
 }
 EXPORT_SYMBOL_GPL(crypto_alloc_ahash);
 
+#ifdef CONFIG_TLS_HANDSHAKE
+/* Asynch hash is required by GHASH used in GCM. */
+struct crypto_alg *
+crypto_find_ahash(const char *alg_name, u32 type, u32 mask)
+{
+	return crypto_find_alg(alg_name, &crypto_ahash_type, type, mask);
+}
+EXPORT_SYMBOL_GPL(crypto_find_ahash);
+
+struct crypto_ahash *
+crypto_alloc_ahash_atomic(struct crypto_alg *alg)
+{
+	alg = crypto_mod_get(alg);
+	BUG_ON(!alg);
+	return crypto_create_tfm(alg, &crypto_ahash_type);
+}
+EXPORT_SYMBOL_GPL(crypto_alloc_ahash_atomic);
+#endif
+
 int crypto_has_ahash(const char *alg_name, u32 type, u32 mask)
 {
 	return crypto_type_has_alg(alg_name, &crypto_ahash_type, type, mask);

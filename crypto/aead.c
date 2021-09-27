@@ -217,6 +217,24 @@ struct crypto_aead *crypto_alloc_aead(const char *alg_name, u32 type, u32 mask)
 }
 EXPORT_SYMBOL_GPL(crypto_alloc_aead);
 
+#ifdef CONFIG_TLS_HANDSHAKE
+struct crypto_alg *
+crypto_find_aead(const char *alg_name, u32 type, u32 mask)
+{
+	return crypto_find_alg(alg_name, &crypto_aead_type, type, mask);
+}
+EXPORT_SYMBOL_GPL(crypto_find_aead);
+
+struct crypto_aead *
+crypto_alloc_aead_atomic(struct crypto_alg *alg)
+{
+	alg = crypto_mod_get(alg);
+	BUG_ON(!alg);
+	return crypto_create_tfm(alg, &crypto_aead_type);
+}
+EXPORT_SYMBOL_GPL(crypto_alloc_aead_atomic);
+#endif
+
 static int aead_prepare_alg(struct aead_alg *alg)
 {
 	struct crypto_alg *base = &alg->base;

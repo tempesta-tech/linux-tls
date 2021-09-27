@@ -446,7 +446,11 @@ void *crypto_create_tfm_node(struct crypto_alg *alg,
 	tfmsize = frontend->tfmsize;
 	total = tfmsize + sizeof(*tfm) + frontend->extsize(alg);
 
+#ifdef CONFIG_TLS_HANDSHAKE
+	mem = kzalloc_node(total, GFP_ATOMIC, node);
+#else
 	mem = kzalloc_node(total, GFP_KERNEL, node);
+#endif
 	if (mem == NULL)
 		goto out_err;
 

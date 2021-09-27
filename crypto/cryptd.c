@@ -901,6 +901,75 @@ static struct crypto_template cryptd_tmpl = {
 	.module = THIS_MODULE,
 };
 
+#ifdef CONFIG_TLS_HANDSHAKE
+
+#define MAX_CACHED_ALG_COUNT	8
+struct alg_cache {
+	int n;
+	spinlock_t lock;
+	struct {
+		u32 type;
+		u32 mask;
+		struct crypto_alg *alg;
+		char alg_name[CRYPTO_MAX_ALG_NAME];
+	} a[MAX_CACHED_ALG_COUNT];
+};
+
+static struct alg_cache skcipher_alg_cache;
+static struct alg_cache ahash_alg_cache;
+static struct alg_cache aead_alg_cache;
+
+/*
+ * Finds a previously allocated algorithm or allocates a new one. In any case,
+ * returned alg holds at least one reference to its module.
+ */
+static struct crypto_alg *
+cryptd_find_alg_cached(const char *cryptd_alg_name, u32 type, u32 mask,
+		       struct crypto_alg *(*find_alg)(const char *, u32, u32),
+		       struct alg_cache *__restrict ac)
+{
+	struct crypto_alg *alg;
+	int k;
+
+	spin_lock(&ac->lock);
+	for (k = 0; k < ac->n; k++) {
+		if (strcmp(ac->a[k].alg_name, cryptd_alg_name) == 0
+		    && ac->a[k].type == type && ac->a[k].mask == mask)
+		{
+			spin_unlock(&ac->lock);
+			return ac->a[k].alg;
+		}
+	}
+	spin_unlock(&ac->lock);
+
+	/* Searching for the algorithm may sleep, so warn about it. */
+	WARN_ON_ONCE(in_serving_softirq());
+
+	alg = find_alg(cryptd_alg_name, type, mask);
+	if (IS_ERR(alg))
+		return alg;
+
+	spin_lock(&ac->lock);
+	if (ac->n >= MAX_CACHED_ALG_COUNT) {
+		spin_unlock(&ac->lock);
+		BUG();
+		return ERR_PTR(-ENOMEM);
+	}
+
+	snprintf(ac->a[ac->n].alg_name, sizeof(ac->a[ac->n].alg_name), "%s",
+		 cryptd_alg_name);
+
+	ac->a[ac->n].type = type;
+	ac->a[ac->n].mask = mask;
+	ac->a[ac->n].alg = alg;
+
+	ac->n += 1;
+	spin_unlock(&ac->lock);
+
+	return alg;
+}
+#endif /* CONFIG_TLS_HANDSHAKE */
+
 struct cryptd_skcipher *cryptd_alloc_skcipher(const char *alg_name,
 					      u32 type, u32 mask)
 {
@@ -912,7 +981,20 @@ struct cryptd_skcipher *cryptd_alloc_skcipher(const char *alg_name,
 		     "cryptd(%s)", alg_name) >= CRYPTO_MAX_ALG_NAME)
 		return ERR_PTR(-EINVAL);
 
+#ifdef CONFIG_TLS_HANDSHAKE
+	{
+		struct crypto_alg *alg =
+			cryptd_find_alg_cached(cryptd_alg_name, type, mask,
+					       crypto_find_skcipher,
+					       &skcipher_alg_cache);
+		if (IS_ERR(alg))
+			return (struct cryptd_skcipher *)alg;
+
+		tfm = crypto_alloc_skcipher_atomic(alg);
+	}
+#else
 	tfm = crypto_alloc_skcipher(cryptd_alg_name, type, mask);
+#endif
 	if (IS_ERR(tfm))
 		return ERR_CAST(tfm);
 
@@ -963,7 +1045,20 @@ struct cryptd_ahash *cryptd_alloc_ahash(const char *alg_name,
 	if (snprintf(cryptd_alg_name, CRYPTO_MAX_ALG_NAME,
 		     "cryptd(%s)", alg_name) >= CRYPTO_MAX_ALG_NAME)
 		return ERR_PTR(-EINVAL);
+#ifdef CONFIG_TLS_HANDSHAKE
+	{
+		struct crypto_alg *alg =
+			cryptd_find_alg_cached(cryptd_alg_name, type, mask,
+					       crypto_find_ahash,
+					       &ahash_alg_cache);
+		if (IS_ERR(alg))
+			return (struct cryptd_ahash *)alg;
+
+		tfm = crypto_alloc_ahash_atomic(alg);
+	}
+#else
 	tfm = crypto_alloc_ahash(cryptd_alg_name, type, mask);
+#endif
 	if (IS_ERR(tfm))
 		return ERR_CAST(tfm);
 	if (tfm->base.__crt_alg->cra_module != THIS_MODULE) {
@@ -1020,7 +1115,20 @@ struct cryptd_aead *cryptd_alloc_aead(const char *alg_name,
 	if (snprintf(cryptd_alg_name, CRYPTO_MAX_ALG_NAME,
 		     "cryptd(%s)", alg_name) >= CRYPTO_MAX_ALG_NAME)
 		return ERR_PTR(-EINVAL);
+#ifdef CONFIG_TLS_HANDSHAKE
+	{
+		struct crypto_alg *alg =
+			cryptd_find_alg_cached(cryptd_alg_name, type, mask,
+					       crypto_find_aead,
+					       &aead_alg_cache);
+		if (IS_ERR(alg))
+			return (struct cryptd_aead *)alg;
+
+		tfm = crypto_alloc_aead_atomic(alg);
+	}
+#else
 	tfm = crypto_alloc_aead(cryptd_alg_name, type, mask);
+#endif
 	if (IS_ERR(tfm))
 		return ERR_CAST(tfm);
 	if (tfm->base.__crt_alg->cra_module != THIS_MODULE) {

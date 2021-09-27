@@ -36,3 +36,15 @@ config TLS_TOE
 	which is incompatible with the Linux networking stack semantics.
 
 	If unsure, say N.
+
+config TLS_HANDSHAKE
+	bool "Transport Layer Security handshake protocol support"
+	depends on TLS
+	select CRYPTO_HMAC
+	select CRYPTO_SHA1
+	select CRYPTO_SHA1_SSSE3
+	default n
+	help
+	Enable kernel support for TLS handshakes.
+
+	If unsure, say N.

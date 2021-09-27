@@ -177,6 +177,11 @@ static inline struct crypto_aead *__crypto_aead_cast(struct crypto_tfm *tfm)
  */
 struct crypto_aead *crypto_alloc_aead(const char *alg_name, u32 type, u32 mask);
 
+#ifdef CONFIG_TLS_HANDSHAKE
+struct crypto_alg *crypto_find_aead(const char *alg_name, u32 type, u32 mask);
+struct crypto_aead *crypto_alloc_aead_atomic(struct crypto_alg *alg);
+#endif
+
 static inline struct crypto_tfm *crypto_aead_tfm(struct crypto_aead *tfm)
 {
 	return &tfm->base;

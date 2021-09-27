@@ -762,6 +762,24 @@ struct crypto_skcipher *crypto_alloc_skcipher(const char *alg_name,
 }
 EXPORT_SYMBOL_GPL(crypto_alloc_skcipher);
 
+#ifdef CONFIG_TLS_HANDSHAKE
+struct crypto_alg *
+crypto_find_skcipher(const char *alg_name, u32 type, u32 mask)
+{
+	return crypto_find_alg(alg_name, &crypto_skcipher_type, type, mask);
+}
+EXPORT_SYMBOL_GPL(crypto_find_skcipher);
+
+struct crypto_skcipher *
+crypto_alloc_skcipher_atomic(struct crypto_alg *alg)
+{
+	alg = crypto_mod_get(alg);
+	BUG_ON(!alg);
+	return crypto_create_tfm(alg, &crypto_skcipher_type);
+}
+EXPORT_SYMBOL_GPL(crypto_alloc_skcipher_atomic);
+#endif
+
 struct crypto_sync_skcipher *crypto_alloc_sync_skcipher(
 				const char *alg_name, u32 type, u32 mask)
 {
