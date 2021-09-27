@@ -1,5 +1,5 @@
 /*
- *		Tempesta TLS
+ *	TLS handshakes for the Linux kernel
  *
  * Based on mbed TLS, https://tls.mbed.org.
  *
