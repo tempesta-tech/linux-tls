@@ -44,6 +44,7 @@
 #include <net/snmp.h>
 #include <net/tls.h>
 #include <net/tls_toe.h>
+#include <net/tls_hs.h>
 
 MODULE_AUTHOR("Mellanox Technologies");
 MODULE_DESCRIPTION("Transport Layer Security Support");
@@ -864,6 +865,11 @@ static int __init tls_register(void)
 {
 	int err;
 
+#ifdef CONFIG_TLS_HANDSHAKE
+	if ((err = tls_hs_init()))
+		return err;
+#endif
+
 	err = register_pernet_subsys(&tls_proc_ops);
 	if (err)
 		return err;
@@ -883,6 +889,10 @@ static void __exit tls_unregister(void)
 	tcp_unregister_ulp(&tcp_tls_ulp_ops);
 	tls_device_cleanup();
 	unregister_pernet_subsys(&tls_proc_ops);
+
+#ifdef CONFIG_TLS_HANDSHAKE
+	tls_hs_exit();
+#endif
 }
 
 module_init(tls_register);

@@ -1,5 +1,5 @@
 /*
- *	TLS handshakes for the Linux kernel
+ *	TLS handshakes
  *
  * Based on mbed TLS, https://tls.mbed.org.
  *
@@ -625,6 +625,9 @@ void ttls_aad2hdriv(TlsXfrm *xfrm, unsigned char *buf);
 
 bool ttls_alpn_ext_eq(const ttls_alpn_proto *proto, const unsigned char *buf,
 		      size_t len);
+
+int tls_hs_init(void);
+void tls_hs_exit(void);
 
 static inline size_t
 ttls_expiv_len(const TlsXfrm *xfrm)

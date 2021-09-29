@@ -1,5 +1,5 @@
 /**
- *		Tempesta TLS
+ *	TLS handshakes
  *
  * Main TLS shared functions for the server and client.
  *
@@ -38,11 +38,6 @@
 #include "oid.h"
 #include "tls_internal.h"
 #include "tls_ticket.h"
-
-MODULE_AUTHOR("Tempesta Technologies, Inc");
-MODULE_DESCRIPTION("TLS Handshakes");
-MODULE_VERSION("0.4.0");
-MODULE_LICENSE("GPL");
 
 static DEFINE_PER_CPU(struct aead_request *, g_req) ____cacheline_aligned;
 
@@ -2755,8 +2750,8 @@ ttls_time_debug(void)
 }
 #endif
 
-static void
-ttls_exit(void)
+void
+tls_hs_exit(void)
 {
 	int cpu;
 
@@ -2770,8 +2765,8 @@ ttls_exit(void)
 	ttls_x509_exit();
 }
 
-static int __init
-ttls_init(void)
+int __init
+tls_hs_init(void)
 {
 	int cpu, r;
 
@@ -2797,9 +2792,6 @@ ttls_init(void)
 
 	return 0;
 err_free:
-	ttls_exit();
+	tls_hs_exit();
 	return -ENOMEM;
 }
-
-module_init(ttls_init);
-module_exit(ttls_exit);
