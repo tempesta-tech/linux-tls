@@ -39,6 +39,9 @@
 
 #include <net/tcp.h>
 #include <net/mptcp.h>
+#ifdef CONFIG_TLS_HANDSHAKE
+#include <net/tls.h>
+#endif
 
 #include <linux/compiler.h>
 #include <linux/gfp.h>
@@ -2667,7 +2670,20 @@ static bool tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,
 							  cwnd_quota,
 							  max_segs),
 						    nonagle);
-
+#ifdef CONFIG_TLS_HANDSHAKE
+		if (sk->sk_write_xmit && tls_skb_type(skb)) {
+			if (unlikely(limit <= TLS_MAX_OVERHEAD)) {
+				net_warn_ratelimited("%s: too small MSS %u"
+						     " for TLS\n",
+						     __func__, mss_now);
+				break;
+			}
+			if (limit > TLS_MAX_PAYLOAD_SIZE + TLS_MAX_OVERHEAD)
+				limit = TLS_MAX_PAYLOAD_SIZE;
+			else
+				limit -= TLS_MAX_OVERHEAD;
+		}
+#endif
 		if (skb->len > limit &&
 		    unlikely(tso_fragment(sk, skb, limit, mss_now, gfp)))
 			break;
@@ -2682,7 +2698,30 @@ static bool tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,
 		 */
 		if (TCP_SKB_CB(skb)->end_seq == TCP_SKB_CB(skb)->seq)
 			break;
-
+#ifdef CONFIG_TLS_HANDSHAKE
+		/*
+		 * This isn't the only place where tcp_transmit_skb() is called,
+		 * but this is the only place where we are from Tempesta FW
+		 * ss_do_send(), so call the hook here. At this point, with
+		 * @limit adjusted above, we have exact understanding how much
+		 * data we can and should send to the peer, so we call
+		 * encryption here and get the best TLS record size.
+		 *
+		 * TODO Sometimes HTTP servers send headers and response body in
+		 * different TCP segments, so coalesce skbs for transmission to
+		 * get 16KB (maximum size of TLS message).
+		 */
+		if (sk->sk_write_xmit && tls_skb_type(skb)) {
+			result = sk->sk_write_xmit(sk, skb, limit);
+			if (unlikely(result)) {
+				if (result == -ENOMEM)
+					break; /* try again next time */
+				return false;
+			}
+			/* Fix up TSO segments after TLS overhead. */
+			tcp_set_skb_tso_segs(skb, mss_now);
+		}
+#endif
 		if (unlikely(tcp_transmit_skb(sk, skb, 1, gfp)))
 			break;
 

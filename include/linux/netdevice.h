@@ -154,11 +154,20 @@ static inline bool dev_xmit_complete(int rc)
 # define LL_MAX_HEADER 32
 #endif
 
+#ifdef CONFIG_TLS_HANDSHAKE
+/*
+ * We need the extra room for TLS record header and explicit IV on skb
+ * allocation to avoid data movement on tcp_write_xmit().
+ */
+#define TLS_MAX_HDR		16
+#else
+#define TLS_MAX_HDR		0
+#endif
 #if !IS_ENABLED(CONFIG_NET_IPIP) && !IS_ENABLED(CONFIG_NET_IPGRE) && \
     !IS_ENABLED(CONFIG_IPV6_SIT) && !IS_ENABLED(CONFIG_IPV6_TUNNEL)
-#define MAX_HEADER LL_MAX_HEADER
+#define MAX_HEADER (LL_MAX_HEADER + TLS_MAX_HDR)
 #else
-#define MAX_HEADER (LL_MAX_HEADER + 48)
+#define MAX_HEADER (LL_MAX_HEADER + 48 + TLS_MAX_HDR)
 #endif
 
 /*

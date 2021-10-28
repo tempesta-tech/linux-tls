@@ -2139,11 +2139,19 @@ ttls_recv(void *tls_data, unsigned char *buf, size_t len, unsigned int *read)
 	BUG_ON(!tls || !tls->conf);
 	T_DBG3("%s: tls=%pK len=%lu read=%u\n", __func__, tls, len, *read);
 
+	/*
+	 * There are many code executed under the saved FPU context and
+	 * probably we won't call SIMD at all. However, in normal case
+	 * we do several crypto operations requiring SIMD and we do our
+	 * best to minimize the number of FPU context savings and restorings.
+	 */
+	kernel_fpu_begin();
+
 	if (!(io->st_flags & TTLS_F_ST_HDRIV)) {
 		unsigned int delta;
 
 		if ((r = ttls_parse_record_hdr(tls, buf, len, read)))
-			return r;
+			goto out;
 		delta = *read - parsed;
 		len -= delta;
 		buf += delta;
@@ -2173,22 +2181,24 @@ ttls_recv(void *tls_data, unsigned char *buf, size_t len, unsigned int *read)
 	switch (io->msgtype) {
 	case TTLS_MSG_ALERT:
 		if (unlikely(!ttls_xfrm_ready(tls))) {
-			if (!(r = ttls_handle_alert(tls)))
-				return 0;
-			return -EPROTO;
+			r = ttls_handle_alert(tls);
+			goto out;
 		}
 		break;
 
 	case TTLS_MSG_CHANGE_CIPHER_SPEC:
 		/* Parsed as part of handshake FSM. */
 	case TTLS_MSG_HANDSHAKE:
-		if (len == 0)
-			return -EAGAIN;
+		if (!len) {
+			r = -EAGAIN;
+			goto out;
+		}
 		if (unlikely(tls->state == TTLS_HANDSHAKE_OVER)) {
 			T_DBG("refusing renegotiation, sending alert\n");
 			ttls_send_alert(tls, TTLS_ALERT_LEVEL_FATAL,
 					TTLS_ALERT_MSG_NO_RENEGOTIATION);
-			return TTLS_ERR_UNEXPECTED_MESSAGE;
+			r = TTLS_ERR_UNEXPECTED_MESSAGE;
+			goto out;
 		}
 
 		/*
@@ -2207,8 +2217,6 @@ ttls_recv(void *tls_data, unsigned char *buf, size_t len, unsigned int *read)
 		/* Cleanup security sensitive temporary data. */
 		ttls_mpi_pool_cleanup_ctx(0, true);
 
-		if (!r)
-			return 0;
 		if (r == -EAGAIN) {
 			/* Add the handshake message chunk to the checksum. */
 			BUG_ON(!tls->hs && tls->state != TTLS_HANDSHAKE_OVER);
@@ -2216,10 +2224,11 @@ ttls_recv(void *tls_data, unsigned char *buf, size_t len, unsigned int *read)
 				size_t n = *read - (int)parsed + hh_len;
 				ttls_update_checksum(tls, buf - hh_len, n);
 			}
-		} else {
+		}
+		else if (r) {
 			T_DBG("handshake error: %d\n", r);
 		}
-		return r;
+		goto out;
 
 	case TTLS_MSG_APPLICATION_DATA:
 		/*
@@ -2228,34 +2237,39 @@ ttls_recv(void *tls_data, unsigned char *buf, size_t len, unsigned int *read)
 		 */
 		if (unlikely(tls->state != TTLS_HANDSHAKE_OVER)) {
 			T_WARN("TLS context isn't ready after handshake\n");
-			return -EPROTO;
+			r = -EPROTO;
+			goto out;
 		}
 		break;
 	}
 
-	if (len == 0)
-		return -EAGAIN;
+	if (!len) {
+		r = -EAGAIN;
+		goto out;
+	}
 
 	/* Encrypted data, crypto context is guaranteed to be ready here. */
 	if (io->msglen > io->rlen + len) {
 		*read += len;
 		io->rlen += len;
-		return -EAGAIN;
+		r = -EAGAIN;
+		goto out;
 	}
 	*read += io->msglen - io->rlen;
 	if ((r = ttls_decrypt(tls, NULL))) {
 		T_DBG("cannot decrypt msg on state %x, ret=%d%s\n",
 		      tls->state, r, r == -EBADMSG ? "(bad ciphertext)" : "");
-		return -EPROTO;
+		r = -EPROTO;
+		goto out;
 	}
 
-	if (io->msgtype == TTLS_MSG_ALERT) {
-		if (!(r = ttls_handle_alert(tls)))
-			return 0;
-		return -EPROTO;
-	}
+	if (io->msgtype == TTLS_MSG_ALERT)
+		r = ttls_handle_alert(tls);
 
-	return 0;
+out:
+	kernel_fpu_end();
+
+	return r;
 }
 EXPORT_SYMBOL(ttls_recv);
 

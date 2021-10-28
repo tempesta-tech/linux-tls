@@ -37,9 +37,33 @@ config TLS_TOE
 
 	If unsure, say N.
 
+config TLS_SOFTIRQ
+	bool "Process TLS in softirq context"
+	depends on TLS
+	default n
+	help
+	By default kTLS works in socket context, so it constructs TLS records of
+	maximum size or of size of available data. The TLS records formed in
+	this way may exceed size of currently allowed transmission on TCP layer
+	leading to extra delays in TLS decryption on receive side.
+
+	Traditionally, the problem is associated with TCP slow start, when
+	congestion and/or send windows are small. However, suppose that we can
+	send N segments and already sent some complete TLS records in N - K
+	segments. We can send only K segments, which might be less than the size
+	of complete TLS record. We'll send the rest of TCP segments when ACKs
+	for the first sent segments arrive. Since we can not start to decryp a
+	TLS record until it's fully read, an additional delays may apper on
+	TLS processing.
+
+	With this option TLS encrypts data in sk_write_xmit() callback called by
+	tcp_write_xmit(), when we know precisely how much data we can send.
+
+	If unsure, say N.
+
 config TLS_HANDSHAKE
 	bool "Transport Layer Security handshake protocol support"
-	depends on TLS
+	depends on TLS && TLS_SOFTIRQ
 	select CRYPTO_HMAC
 	select CRYPTO_SHA1
 	select CRYPTO_SHA1_SSSE3

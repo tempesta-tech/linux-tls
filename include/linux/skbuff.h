@@ -931,6 +931,52 @@ struct sk_buff {
 #define SKB_ALLOC_RX		0x02
 #define SKB_ALLOC_NAPI		0x04
 
+#ifdef CONFIG_TLS_HANDSHAKE
+long __get_skb_count(void);
+
+/**
+ * The skb type is used only for time between @skb was inserted into TCP send
+ * queue and it's processed (first time) in tcp_write_xmit(). This time the @skb
+ * isn't scheduled yet, so we can use skb->dev for our needs to avoid extending
+ * sk_buff. We use the least significant bit to be sure that this isn't a
+ * pointer to not to break anything. TLS message type << 1 is always smaller
+ * than 0xff.
+ */
+static inline void
+tls_skb_settype(struct sk_buff *skb, unsigned char type)
+{
+	BUG_ON(type >= 0x80);
+	WARN_ON_ONCE(skb->dev);
+
+	skb->dev = (void *)((type << 1) | 1UL);
+}
+
+static inline unsigned char
+tls_skb_type(struct sk_buff *skb)
+{
+	unsigned long d = (unsigned long)skb->dev;
+
+	if (!(d & 1UL))
+		return 0; /* a pointer in skb->dev */
+	return d >> 1;
+}
+
+static inline void
+tls_skb_typecp(struct sk_buff *dst, struct sk_buff *src)
+{
+	dst->dev = src->dev;
+}
+
+static inline void
+tls_skb_clear(struct sk_buff *skb)
+{
+	unsigned long d = (unsigned long)skb->dev;
+
+	WARN_ON_ONCE(d & ~0xff);
+	skb->dev = NULL;
+}
+#endif
+
 /**
  * skb_pfmemalloc - Test if the skb was allocated from PFMEMALLOC reserves
  * @skb: buffer

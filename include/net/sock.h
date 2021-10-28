@@ -506,6 +506,11 @@ struct sock {
 	void			(*sk_state_change)(struct sock *sk);
 	void			(*sk_data_ready)(struct sock *sk);
 	void			(*sk_write_space)(struct sock *sk);
+#ifdef CONFIG_TLS_HANDSHAKE
+	int			(*sk_write_xmit)(struct sock *sk,
+						 struct sk_buff *skb,
+						 unsigned int limit);
+#endif
 	void			(*sk_error_report)(struct sock *sk);
 	int			(*sk_backlog_rcv)(struct sock *sk,
 						  struct sk_buff *skb);
