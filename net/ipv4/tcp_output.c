@@ -1524,7 +1524,7 @@ static void tcp_insert_write_queue_after(struct sk_buff *skb,
 					 enum tcp_queue tcp_queue)
 {
 #ifdef CONFIG_SECURITY_TEMPESTA
-	tempesta_tls_skb_typecp(buff, skb);
+	tls_skb_typecp(buff, skb);
 #endif
 	if (tcp_queue == TCP_FRAG_IN_WRITE_QUEUE)
 		__skb_queue_after(&sk->sk_write_queue, skb, buff);
