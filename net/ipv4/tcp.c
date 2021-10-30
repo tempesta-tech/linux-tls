@@ -322,6 +322,7 @@ DEFINE_STATIC_KEY_FALSE(tcp_rx_skb_cache_key);
 EXPORT_SYMBOL(tcp_rx_skb_cache_key);
 
 DEFINE_STATIC_KEY_FALSE(tcp_tx_skb_cache_key);
+EXPORT_SYMBOL_GPL(tcp_tx_skb_cache_key);
 
 void tcp_enter_memory_pressure(struct sock *sk)
 {
@@ -648,18 +649,19 @@ int tcp_ioctl(struct sock *sk, int cmd, unsigned long arg)
 }
 EXPORT_SYMBOL(tcp_ioctl);
 
-static inline void tcp_mark_push(struct tcp_sock *tp, struct sk_buff *skb)
+void tcp_mark_push(struct tcp_sock *tp, struct sk_buff *skb)
 {
 	TCP_SKB_CB(skb)->tcp_flags |= TCPHDR_PSH;
 	tp->pushed_seq = tp->write_seq;
 }
+EXPORT_SYMBOL(tcp_mark_push);
 
 static inline bool forced_push(const struct tcp_sock *tp)
 {
 	return after(tp->write_seq, tp->pushed_seq + (tp->max_window >> 1));
 }
 
-static void skb_entail(struct sock *sk, struct sk_buff *skb)
+void skb_entail(struct sock *sk, struct sk_buff *skb)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct tcp_skb_cb *tcb = TCP_SKB_CB(skb);
@@ -668,7 +670,15 @@ static void skb_entail(struct sock *sk, struct sk_buff *skb)
 	tcb->seq     = tcb->end_seq = tp->write_seq;
 	tcb->tcp_flags = TCPHDR_ACK;
 	tcb->sacked  = 0;
-	__skb_header_release(skb);
+
+	/*
+	 * fclones are possible here, so accurately update
+	 * skb_shinfo(skb)->dataref.
+	 */
+	BUG_ON(skb->nohdr);
+	skb->nohdr = 1;
+	atomic_add(1 << SKB_DATAREF_SHIFT, &skb_shinfo(skb)->dataref);
+
 	tcp_add_write_queue_tail(sk, skb);
 	sk_wmem_queued_add(sk, skb->truesize);
 	sk_mem_charge(sk, skb->truesize);
@@ -677,6 +687,7 @@ static void skb_entail(struct sock *sk, struct sk_buff *skb)
 
 	tcp_slow_start_after_idle_check(sk);
 }
+EXPORT_SYMBOL(skb_entail);
 
 static inline void tcp_mark_urg(struct tcp_sock *tp, int flags)
 {
@@ -736,6 +747,7 @@ void tcp_push(struct sock *sk, int flags, int mss_now,
 
 	__tcp_push_pending_frames(sk, mss_now, nonagle);
 }
+EXPORT_SYMBOL(tcp_push);
 
 static int tcp_splice_data_recv(read_descriptor_t *rd_desc, struct sk_buff *skb,
 				unsigned int offset, size_t len)
@@ -912,6 +924,7 @@ struct sk_buff *sk_stream_alloc_skb(struct sock *sk, int size, gfp_t gfp,
 	}
 	return NULL;
 }
+EXPORT_SYMBOL(sk_stream_alloc_skb);
 
 static unsigned int tcp_xmit_size_goal(struct sock *sk, u32 mss_now,
 				       int large_allowed)
@@ -947,6 +960,7 @@ int tcp_send_mss(struct sock *sk, int *size_goal, int flags)
 
 	return mss_now;
 }
+EXPORT_SYMBOL(tcp_send_mss);
 
 /* In some cases, both sendpage() and sendmsg() could have added
  * an skb to the write queue, but failed adding payload on it.
@@ -1586,6 +1600,7 @@ void tcp_cleanup_rbuf(struct sock *sk, int copied)
 	if (time_to_ack)
 		tcp_send_ack(sk);
 }
+EXPORT_SYMBOL(tcp_cleanup_rbuf);
 
 static struct sk_buff *tcp_recv_skb(struct sock *sk, u32 seq, u32 *off)
 {
@@ -2359,7 +2374,7 @@ static const unsigned char new_state[16] = {
   [TCP_NEW_SYN_RECV]	= TCP_CLOSE,	/* should not happen ! */
 };
 
-static int tcp_close_state(struct sock *sk)
+int tcp_close_state(struct sock *sk)
 {
 	int next = (int)new_state[sk->sk_state];
 	int ns = next & TCP_STATE_MASK;
@@ -2368,6 +2383,7 @@ static int tcp_close_state(struct sock *sk)
 
 	return next & TCP_ACTION_FIN;
 }
+EXPORT_SYMBOL(tcp_close_state);
 
 /*
  *	Shutdown the sending side of a connection. Much like close except
@@ -2407,6 +2423,7 @@ bool tcp_check_oom(struct sock *sk, int shift)
 		net_info_ratelimited("out of memory -- consider tuning tcp_mem\n");
 	return too_many_orphans || out_of_socket_memory;
 }
+EXPORT_SYMBOL(tcp_check_oom);
 
 void tcp_close(struct sock *sk, long timeout)
 {

@@ -130,3 +130,4 @@ void reqsk_fastopen_remove(struct sock *sk, struct request_sock *req,
 out:
 	spin_unlock_bh(&fastopenq->lock);
 }
+EXPORT_SYMBOL(reqsk_fastopen_remove);

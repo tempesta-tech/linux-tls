@@ -524,13 +524,13 @@ extern bool force_irqthreads;
    tasklets are more than enough. F.e. all serial device BHs et
    al. should be converted to tasklets, not to softirqs.
  */
-
+/* Tempesta: process RX before TX to proxy traffic in one softirq shot. */
 enum
 {
 	HI_SOFTIRQ=0,
 	TIMER_SOFTIRQ,
-	NET_TX_SOFTIRQ,
 	NET_RX_SOFTIRQ,
+	NET_TX_SOFTIRQ,
 	BLOCK_SOFTIRQ,
 	IRQ_POLL_SOFTIRQ,
 	TASKLET_SOFTIRQ,
@@ -574,7 +574,7 @@ extern void softirq_init(void);
 extern void __raise_softirq_irqoff(unsigned int nr);
 
 extern void raise_softirq_irqoff(unsigned int nr);
-extern void raise_softirq(unsigned int nr);
+void raise_softirq(unsigned int nr);
 
 DECLARE_PER_CPU(struct task_struct *, ksoftirqd);
 

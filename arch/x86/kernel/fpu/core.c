@@ -76,6 +76,10 @@ static bool interrupted_user_mode(void)
  */
 bool irq_fpu_usable(void)
 {
+#ifdef CONFIG_SECURITY_TEMPESTA
+	if (likely(in_serving_softirq()))
+		return true;
+#endif
 	return !in_interrupt() ||
 		interrupted_user_mode() ||
 		interrupted_kernel_fpu_idle();
@@ -121,10 +125,8 @@ int copy_fpregs_to_fpstate(struct fpu *fpu)
 }
 EXPORT_SYMBOL(copy_fpregs_to_fpstate);
 
-void kernel_fpu_begin_mask(unsigned int kfpu_mask)
+void __kernel_fpu_begin_mask(unsigned int kfpu_mask)
 {
-	preempt_disable();
-
 	WARN_ON_FPU(!irq_fpu_usable());
 	WARN_ON_FPU(this_cpu_read(in_kernel_fpu));
 
@@ -148,14 +150,43 @@ void kernel_fpu_begin_mask(unsigned int kfpu_mask)
 	if (unlikely(kfpu_mask & KFPU_387) && boot_cpu_has(X86_FEATURE_FPU))
 		asm volatile ("fninit");
 }
+
+void kernel_fpu_begin_mask(unsigned int kfpu_mask)
+{
+#ifdef CONFIG_SECURITY_TEMPESTA
+	/*
+	 * We don't know in which context the function is called, but we know
+	 * preciseely that softirq uses FPU, so we have to disable softirq as
+	 * well as task preemption.
+	 */
+	local_bh_disable();
+#endif
+	preempt_disable();
+#ifdef CONFIG_SECURITY_TEMPESTA
+	/* SoftIRQ in the Tempesta kernel always enables FPU. */
+	if (unlikely(!in_serving_softirq()))
+#endif
+		__kernel_fpu_begin_mask(kfpu_mask);
+}
 EXPORT_SYMBOL_GPL(kernel_fpu_begin_mask);
 
-void kernel_fpu_end(void)
+void __kernel_fpu_end_bh(void)
 {
 	WARN_ON_FPU(!this_cpu_read(in_kernel_fpu));
 
 	this_cpu_write(in_kernel_fpu, false);
+}
+
+void kernel_fpu_end(void)
+{
+#ifdef CONFIG_SECURITY_TEMPESTA
+	if (unlikely(!in_serving_softirq()))
+#endif
+		__kernel_fpu_end_bh();
 	preempt_enable();
+#ifdef CONFIG_SECURITY_TEMPESTA
+	local_bh_enable();
+#endif
 }
 EXPORT_SYMBOL_GPL(kernel_fpu_end);
 

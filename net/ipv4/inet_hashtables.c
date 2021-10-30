@@ -794,7 +794,8 @@ other_parity_scan:
 		goto ok;
 next_port:
 		spin_unlock_bh(&head->lock);
-		cond_resched();
+		if (!in_serving_softirq())
+			cond_resched();
 	}
 
 	offset++;

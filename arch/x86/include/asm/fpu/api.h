@@ -24,6 +24,10 @@
 #define KFPU_387	_BITUL(0)	/* 387 state will be initialized */
 #define KFPU_MXCSR	_BITUL(1)	/* MXCSR will be initialized */
 
+#ifdef CONFIG_SECURITY_TEMPESTA
+extern void __kernel_fpu_begin_mask(unsigned int kfpu_mask);
+extern void __kernel_fpu_end_bh(void);
+#endif
 extern void kernel_fpu_begin_mask(unsigned int kfpu_mask);
 extern void kernel_fpu_end(void);
 extern bool irq_fpu_usable(void);

@@ -163,11 +163,24 @@ static inline bool dev_xmit_complete(int rc)
 #else
 #define TLS_MAX_HDR		0
 #endif
+#ifdef CONFIG_SECURITY_TEMPESTA
+/*
+ * For fast transformation of HTTP/1.1 responses into HTTP/2 format, Tempesta
+ * uses zero-copy in-place rewriting of the response data, right in original
+ * skb. HTTP/2 data is almost always smaller of its source HTTP/1.1 data, but
+ * for the sake of robustness we use 32-byte initial offset in front of skb
+ * data. Thus, in order to guarantee the stack headers to fit, we should
+ * increase the total space for them.
+ */
+#define HTTP2_MAX_OFFSET	32
+#else
+#define HTTP2_MAX_OFFSET	0
+#endif
 #if !IS_ENABLED(CONFIG_NET_IPIP) && !IS_ENABLED(CONFIG_NET_IPGRE) && \
     !IS_ENABLED(CONFIG_IPV6_SIT) && !IS_ENABLED(CONFIG_IPV6_TUNNEL)
-#define MAX_HEADER (LL_MAX_HEADER + TLS_MAX_HDR)
+#define MAX_HEADER (LL_MAX_HEADER + TLS_MAX_HDR + HTTP2_MAX_OFFSET)
 #else
-#define MAX_HEADER (LL_MAX_HEADER + 48 + TLS_MAX_HDR)
+#define MAX_HEADER (LL_MAX_HEADER + 48 + TLS_MAX_HDR + HTTP2_MAX_OFFSET)
 #endif
 
 /*

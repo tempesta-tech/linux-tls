@@ -1,0 +1,17 @@
+config SECURITY_TEMPESTA
+	bool "Tempesta FW Support"
+	depends on SECURITY && NET && INET
+	select TLS_HANDSHAKE
+	select SECURITY_NETWORK
+	select RPS
+	select CRYPTO
+	select CRYPTO_HMAC
+	select CRYPTO_SHA1
+	select CRYPTO_SHA1_SSSE3
+	select CRYPTO_GCM
+	select CRYPTO_CCM
+	default y
+	help
+	  This selects Tempesta FW security module.
+	  Further information may be found at https://github.com/natsys/tempesta
+	  If you are unsure how to answer this question, answer N.

@@ -232,6 +232,12 @@
 	SKB_WITH_OVERHEAD((PAGE_SIZE << (ORDER)) - (X))
 #define SKB_MAX_HEAD(X)		(SKB_MAX_ORDER((X), 0))
 #define SKB_MAX_ALLOC		(SKB_MAX_ORDER(0, 2))
+#ifdef CONFIG_SECURITY_TEMPESTA
+#define SKB_MAX_HEADER	(PAGE_SIZE - MAX_TCP_HEADER			\
+			 - SKB_DATA_ALIGN(sizeof(struct sk_buff))	\
+			 - SKB_DATA_ALIGN(sizeof(struct skb_shared_info)) \
+			 - SKB_DATA_ALIGN(1))
+#endif
 
 /* return minimum truesize of one skb containing X bytes of data */
 #define SKB_TRUESIZE(X) ((X) +						\
@@ -784,6 +790,9 @@ struct sk_buff {
 				fclone:2,
 				peeked:1,
 				head_frag:1,
+#ifdef CONFIG_SECURITY_TEMPESTA
+				skb_page:1,
+#endif
 				pfmemalloc:1;
 #ifdef CONFIG_SKB_EXTENSIONS
 	__u8			active_extensions;
@@ -838,6 +847,9 @@ struct sk_buff {
 	__u8			dst_pending_confirm:1;
 #ifdef CONFIG_IPV6_NDISC_NODETYPE
 	__u8			ndisc_nodetype:2;
+#endif
+#ifdef CONFIG_SECURITY_TEMPESTA
+	__u8			tail_lock:1;
 #endif
 
 	__u8			ipvs_property:1;
@@ -1120,6 +1132,7 @@ void kfree_skb_partial(struct sk_buff *skb, bool head_stolen);
 bool skb_try_coalesce(struct sk_buff *to, struct sk_buff *from,
 		      bool *fragstolen, int *delta_truesize);
 
+void *pg_skb_alloc(unsigned int size, gfp_t gfp_mask, int node);
 struct sk_buff *__alloc_skb(unsigned int size, gfp_t priority, int flags,
 			    int node);
 struct sk_buff *__build_skb(void *data, unsigned int frag_size);
@@ -2150,7 +2163,11 @@ struct sk_buff *skb_dequeue_tail(struct sk_buff_head *list);
 
 static inline bool skb_is_nonlinear(const struct sk_buff *skb)
 {
+#ifdef CONFIG_SECURITY_TEMPESTA
+	return skb->tail_lock || skb->data_len;
+#else
 	return skb->data_len;
+#endif
 }
 
 static inline unsigned int skb_headlen(const struct sk_buff *skb)
@@ -2386,6 +2403,20 @@ static inline unsigned int skb_headroom(const struct sk_buff *skb)
 {
 	return skb->data - skb->head;
 }
+
+#ifdef CONFIG_SECURITY_TEMPESTA
+/**
+ *	skb_tailroom_locked - bytes at buffer end
+ *	@skb: buffer to check
+ *
+ *	Return the number of bytes of free space at the tail of an sk_buff with
+ *	respect to tail locking only.
+ */
+static inline int skb_tailroom_locked(const struct sk_buff *skb)
+{
+	return skb->tail_lock ? 0 : skb->end - skb->tail;
+}
+#endif
 
 /**
  *	skb_tailroom - bytes at buffer end

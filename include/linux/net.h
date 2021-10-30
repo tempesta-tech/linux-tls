@@ -215,6 +215,8 @@ struct net_proto_family {
 	struct module	*owner;
 };
 
+extern const struct net_proto_family *get_proto_family(int family);
+
 struct iovec;
 struct kvec;
 
