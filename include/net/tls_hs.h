@@ -529,6 +529,7 @@ typedef struct tls_handshake_t tls_handshake_t;
  * heirs. Since most of the work is done per-cpu, we can not pay much attention
  * to the lock granularity.
  *
+ * @sk		- linked with the TLS connection TCP socket;
  * @lock	- protects the TLS context changes;
  * @conf	- global TLS configuration;
  * @peer_conf	- Vhost specific TLS configuration;
@@ -544,6 +545,7 @@ typedef struct tls_handshake_t tls_handshake_t;
  * @hostname	- expected peer CN for verification (and SNI if available);
  */
 typedef struct ttls_context {
+	struct sock		*sk;
 	spinlock_t		lock;
 	const TlsCfg		*conf;
 	TlsPeerCfg		*peer_conf;
@@ -585,7 +587,7 @@ void ttls_register_callbacks(ttls_send_cb_t *send_cb, ttls_sni_cb_t *sni_cb,
 
 const char *ttls_get_ciphersuite_name(const int ciphersuite_id);
 
-int ttls_ctx_init(TlsCtx *tls, const TlsCfg *conf);
+int ttls_ctx_init(TlsCtx *tls, struct sock *sk, const TlsCfg *conf);
 
 void ttls_conf_authmode(TlsCfg *conf, int authmode);
 
