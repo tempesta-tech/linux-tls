@@ -2231,8 +2231,11 @@ ttls_handshake_server_step(TlsCtx *tls, unsigned char *buf, size_t len,
 	}
 	T_FSM_STATE(TTLS_HANDSHAKE_OVER) {
 		WARN_ON_ONCE(r);
-		r = ttls_hs_over_cb(tls, resumed ? TTLS_HS_CB_FINISHED_RESUMED
-						 : TTLS_HS_CB_FINISHED_NEW);
+		if (ttls_hs_over_cb) {
+			int st = resumed ? TTLS_HS_CB_FINISHED_RESUMED
+					 : TTLS_HS_CB_FINISHED_NEW;
+			r = ttls_hs_over_cb(tls, st);
+		}
 		T_FSM_EXIT();
 	}
 

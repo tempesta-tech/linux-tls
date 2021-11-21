@@ -226,6 +226,12 @@ ttls_skb_extract_alert(TlsIOCtx *io, TlsXfrm *xfrm)
 
 /**
  * Register I/O callbacks from the underlying network layer.
+ *
+ * @ttls_sni_cb		- accepts an SNI string from the TLS layer and looks
+ *			  up for for an available host name at the application
+ *			  (caller) level.
+ * @ttls_hs_over_cb	- callback called on completed TLS handshakes,
+ *			  typically used by a rate limiting logic.
  */
 void
 ttls_register_callbacks(ttls_send_cb_t *send_cb, ttls_sni_cb_t *sni_cb,

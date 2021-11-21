@@ -2671,6 +2671,19 @@ static bool tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,
 							  max_segs),
 						    nonagle);
 #ifdef CONFIG_TLS_HANDSHAKE
+		/*
+		 * At this point, with @limit adjusted above, we have exact
+		 * understanding how much data we can and should send to the
+		 * peer, so we call encryption here and get the best TLS record
+		 * size to avoid extra RTT before starting to decrypt on the
+		 * receive side. This is why sk_write_space() hook isn't good
+		 * for us since on the time of it's call we do not know which
+		 * portion of data TCP is going to send.
+		 *
+		 * TODO Sometimes HTTP servers send headers and response body
+		 * in different TCP segments, so coalesce skbs for transmission
+		 * to get 16KB (maximum size of TLS message).
+		 */
 		if (sk->sk_write_xmit && tls_skb_type(skb)) {
 			if (unlikely(limit <= TLS_MAX_OVERHEAD)) {
 				net_warn_ratelimited("%s: too small MSS %u"
@@ -2699,18 +2712,6 @@ static bool tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,
 		if (TCP_SKB_CB(skb)->end_seq == TCP_SKB_CB(skb)->seq)
 			break;
 #ifdef CONFIG_TLS_HANDSHAKE
-		/*
-		 * This isn't the only place where tcp_transmit_skb() is called,
-		 * but this is the only place where we are from Tempesta FW
-		 * ss_do_send(), so call the hook here. At this point, with
-		 * @limit adjusted above, we have exact understanding how much
-		 * data we can and should send to the peer, so we call
-		 * encryption here and get the best TLS record size.
-		 *
-		 * TODO Sometimes HTTP servers send headers and response body in
-		 * different TCP segments, so coalesce skbs for transmission to
-		 * get 16KB (maximum size of TLS message).
-		 */
 		if (sk->sk_write_xmit && tls_skb_type(skb)) {
 			result = sk->sk_write_xmit(sk, skb, limit);
 			if (unlikely(result)) {
