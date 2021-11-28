@@ -975,6 +975,77 @@ tls_skb_clear(struct sk_buff *skb)
 	WARN_ON_ONCE(d & ~0xff);
 	skb->dev = NULL;
 }
+
+/**
+ * The ss_* list routines doubles the Linux corresponding routines operating
+ * with sk_buff_head from linux/skbuff.h. We don't use the Linux routines to
+ * not to waste memory and cpu cycles for handling and managing qlen and lock
+ * members for sk_buff_head.
+ */
+static inline void
+ss_skb_queue_tail(struct sk_buff **skb_head, struct sk_buff *skb)
+{
+	/* The skb shouldn't be in any other queue. */
+	WARN_ON_ONCE(skb->next || skb->prev);
+	if (!*skb_head) {
+		*skb_head = skb;
+		skb->prev = skb->next = skb;
+		return;
+	}
+	skb->next = *skb_head;
+	skb->prev = (*skb_head)->prev;
+	skb->next->prev = skb->prev->next = skb;
+}
+
+static inline void
+ss_skb_unlink(struct sk_buff **skb_head, struct sk_buff *skb)
+{
+	WARN_ON_ONCE(!skb->prev || !skb->next);
+	/* If this is last skb, set head to NULL. */
+	if (skb->next == skb) {
+		*skb_head = NULL;
+	} else {
+		skb->prev->next = skb->next;
+		skb->next->prev = skb->prev;
+		/* If this is head skb and not last, set head to the next skb. */
+		if (*skb_head == skb)
+			*skb_head = skb->next;
+	}
+	skb->next = skb->prev = NULL;
+}
+
+/**
+ * Almost a copy of standard skb_dequeue() except it works with skb list
+ * instead of sk_buff_head. Several crucial data include skb list and we don't
+ * want to spend extra memory for unused members of skb_buff_head.
+ */
+static inline struct sk_buff *
+ss_skb_dequeue(struct sk_buff **skb_head)
+{
+	struct sk_buff *skb = *skb_head;
+	if (skb)
+		ss_skb_unlink(skb_head, skb);
+	return skb;
+}
+
+static inline void
+ss_skb_adjust_data_len(struct sk_buff *skb, int delta)
+{
+	skb->len += delta;
+	skb->data_len += delta;
+	skb->truesize += delta;
+}
+
+int ss_skb_process(struct sk_buff *skb, ss_skb_actor_t actor, void *objdata,
+		   unsigned int *chunks, unsigned int *processed);
+struct sk_buff *ss_skb_split(struct sk_buff *skb, int len);
+int ss_skb_chop_head_tail(struct sk_buff *skb_head, struct sk_buff *skb,
+			  size_t head, size_t trail);
+int __extend_pgfrags(struct sk_buff *skb_head, struct sk_buff *skb, int from,
+		     int n);
+int __split_pgfrag_del_w_frag(struct sk_buff *skb_head, struct sk_buff *skb,
+			      int i, int off, int len, char **data,
+			      struct sk_buff **skb_ptr, int *fragn);
 #endif
 
 /**

@@ -6381,3 +6381,388 @@ free_now:
 }
 EXPORT_SYMBOL(__skb_ext_put);
 #endif /* CONFIG_SKB_EXTENSIONS */
+
+
+#ifdef CONFIG_TLS_HANDSHAKE
+/**
+ * Process a socket buffer like standard skb_seq_read(), but return when the
+ * @actor finishes processing, so a caller gets control w/o looping when an
+ * application level message is fully read. The function is reentrant: @actor
+ * called from the function can call it again with another @actor for upper
+ * layer protocol (e.g. TLS handler calls HTTP parser), so @len defines how
+ * much data is available for now.
+ *
+ * The function is unaware of an application layer, but it still splits
+ * @skb into messages. If @actor returns POSTPONE and there is more data
+ * in @skb, then the function continues to process the @skb. Otherwise
+ * it returns, thus allowing an upper layer to process a full message
+ * or an error code.
+ *
+ * @return SS_OK, SS_DROP, SS_POSTPONE, or a negative value of error code.
+ * @processed and @chunks are incremented by number of effectively processed
+ * bytes and contiguous data chunks correspondingly. A caller must properly
+ * initialize them. @actor sees @chunks including current chunk of data.
+ */
+int
+ss_skb_process(struct sk_buff *skb, ss_skb_actor_t actor, void *objdata,
+	       unsigned int *chunks, unsigned int *processed)
+{
+	int i, r = SS_OK;
+	int headlen = skb_headlen(skb);
+	unsigned int _processed;
+	struct skb_shared_info *si = skb_shinfo(skb);
+
+	if (WARN_ON_ONCE(skb->len == 0))
+		return -EIO;
+
+	/* Process linear data. */
+	if (likely(headlen > 0)) {
+		++*chunks;
+		_processed = 0;
+		r = actor(objdata, skb->data, headlen, &_processed);
+		*processed += _processed;
+		if (r != -EAGAIN)
+			return r;
+	}
+
+	/*
+	 * Process paged fragments. This is where GROed data is placed.
+	 * See ixgbe_fetch_rx_buffer() and tcp_gro_receive().
+	 */
+	for (i = 0; i < si->nr_frags; ++i) {
+		const skb_frag_t *frag = &si->frags[i];
+
+		++*chunks;
+		_processed = 0;
+		r = actor(objdata, skb_frag_address(frag), skb_frag_size(frag),
+			  &_processed);
+		*processed += _processed;
+		if (r != -EAGAIN)
+			return r;
+	}
+
+	return r;
+}
+EXPORT_SYMBOL_GPL(ss_skb_process);
+
+/*
+ * Split @skb in two at a given offset. The original SKB is shrunk
+ * to specified size @len, and the remaining data is put into a new SKB.
+ *
+ * The implementation is very much like tcp_fragment() or tso_fragment()
+ * in the Linux kernel. The major difference is that these SKBs were just
+ * taken out of the receive queue, and they have been orphaned. They have
+ * not been out to the write queue yet.
+ */
+struct sk_buff *
+ss_skb_split(struct sk_buff *skb, int len)
+{
+	struct sk_buff *buff;
+	int n = 0;
+
+	if (len < skb_headlen(skb))
+		n = skb_headlen(skb) - len;
+
+	buff = alloc_skb_fclone(ALIGN(n, 4) + MAX_TCP_HEADER, GFP_ATOMIC);
+	if (!buff)
+		return NULL;
+
+	skb_reserve(buff, MAX_TCP_HEADER);
+
+	/* @buff already accounts @n in truesize. */
+	buff->truesize += skb->len - len - n;
+	skb->truesize -= skb->len - len;
+
+	/*
+	 * Initialize GSO segments counter to let TCP set it according to
+	 * the current MSS on egress path.
+	 */
+	tcp_skb_pcount_set(skb, 0);
+
+	/*
+	 * These are orphaned SKBs that are taken out of the TCP/IP
+	 * stack and are completely owned by Tempesta. There is no
+	 * need to correct the sequence numbers, adjust TCP flags,
+	 * or recalculate the checksum.
+	 */
+	skb_split(skb, buff, len);
+	__copy_ip_header(buff, skb);
+
+	return buff;
+}
+EXPORT_SYMBOL_GPL(ss_skb_split);
+
+/*
+ * Insert @nskb in the list after @skb. Note that standard
+ * kernel 'skb_insert()' function does not suit here, as it
+ * works with 'sk_buff_head' structure with additional fields
+ * @qlen and @lock; we don't need these fields for our skb
+ * list, so a custom function had been introduced.
+ */
+static inline void
+__skb_insert_after(struct sk_buff *skb, struct sk_buff *nskb)
+{
+	nskb->next = skb->next;
+	nskb->prev = skb;
+	nskb->next->prev = skb->next = nskb;
+}
+
+/**
+ * Similar to skb_shift().
+ * Make room for @n fragments starting with slot @from.
+ * Note that @from can be equal to MAX_SKB_FRAGS.
+ *
+ * @return 0 on success, -errno on failure.
+ */
+static int
+__extend_pgfrags(struct sk_buff *skb_head, struct sk_buff *skb, int from, int n)
+{
+	struct skb_shared_info *si = skb_shinfo(skb);
+	int i, n_shift, n_excess = 0, tail_frags = si->nr_frags - from;
+
+	BUG_ON((n <= 0) || (n > 2));
+	BUG_ON(tail_frags < 0);
+
+	/* No room for @n extra page fragments in the SKB. */
+	if (si->nr_frags + n > MAX_SKB_FRAGS) {
+		skb_frag_t *f;
+		struct sk_buff *nskb;
+		unsigned int e_size = 0;
+
+		/* Going out if the @skb is prohibied by the caller. */
+		if (!skb_head)
+			return -ENOMEM;
+
+		/*
+		 * The number of page fragments that don't fit in the SKB
+		 * after the room is prepared for @n page fragments.
+		 */
+		n_excess = si->nr_frags + n - MAX_SKB_FRAGS;
+
+		/*
+		 * Use the next SKB if there's room there for @n_excess
+		 * page fragments. Otherwise, allocate a new SKB to hold
+		 * @n_excess page fragments.
+		 */
+		nskb = skb->next;
+		if (nskb != skb_head && !skb_headlen(nskb)
+		    && (skb_shinfo(nskb)->nr_frags <= MAX_SKB_FRAGS - n_excess))
+		{
+			int r = __extend_pgfrags(skb_head, nskb, 0, n_excess);
+			if (r)
+				return r;
+		} else {
+			nskb = alloc_skb(MAX_TCP_HEADER, GFP_ATOMIC);
+			if (!nskb)
+				return -ENOMEM;
+			skb_reserve(skb, MAX_TCP_HEADER);
+			skb_shinfo(nskb)->tx_flags = skb_shinfo(skb)->tx_flags;
+			__skb_insert_after(skb, nskb);
+			skb_shinfo(nskb)->nr_frags = n_excess;
+		}
+
+		/* No fragments to shift. */
+		if (!tail_frags)
+			return 0;
+
+		/*
+		 * Move @n_excess number of page fragments to new SKB. We
+		 * must move @n_excess fragments to next/new skb, except
+		 * those, which we are inserting (@n fragments) - so we
+		 * must move last @n_excess fragments: not more than
+		 * @tail_frags, and not more than @n_excess itself
+		 * (maximum @n_excess fragments can be moved).
+		 */
+		for (i = n_excess - 1; i >= max(n_excess - tail_frags, 0); --i) {
+			f = &si->frags[MAX_SKB_FRAGS - n + i];
+			skb_shinfo(nskb)->frags[i] = *f;
+			e_size += skb_frag_size(f);
+		}
+		ss_skb_adjust_data_len(skb, -e_size);
+		ss_skb_adjust_data_len(nskb, e_size);
+	}
+	/*
+	 * Make room for @n page fragments in current SKB. We must shift
+	 * @tail_frags fragments inside current skb, except those, which we
+	 * moved to next/new skb (above); in case of too small @tail_frags
+	 * and/or too big @n values, the value of @n_shift will be negative,
+	 * but considering maximum @n value must be not greater than 2, the
+	 * minimum @n_shift value must be not less than -1.
+	 */
+	n_shift = tail_frags - n_excess;
+	BUG_ON(n_shift + 1 < 0);
+	if (n_shift > 0)
+		memmove(&si->frags[from + n],
+			&si->frags[from], n_shift * sizeof(skb_frag_t));
+	si->nr_frags += n - n_excess;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(__extend_pgfrags);
+
+/*
+ * Set @data and @skb_ptr to proper values. The data should
+ * be located in the paged fragment @i of @skb. If the paged
+ * fragment is not there, then find the next data location.
+ */
+static inline void
+__it_next_data(struct sk_buff *skb, int i, char **data,
+	       struct sk_buff **skb_ptr, int *fragn)
+{
+	struct skb_shared_info *si = skb_shinfo(skb);
+
+	if (i < si->nr_frags) {
+		*data = skb_frag_address(&si->frags[i]);
+		*skb_ptr = skb;
+		*fragn = i;
+	} else {
+		*skb_ptr = skb->next;
+		*data = __skb_data_address(it->skb, fragn);
+	}
+}
+
+/**
+ * Delete @len (the value is positive now) bytes from skb frag @i.
+ *
+ * @return 0 on success, -errno on failure.
+ * @return pointer to data after the deleted data in @data.
+ * @return pointer to SKB with data at @data in @skb_ptr.
+ */
+int
+__split_pgfrag_del_w_frag(struct sk_buff *skb_head, struct sk_buff *skb, int i,
+			  int off, int len, char **data,
+			  struct sk_buff *skb_ptr, int *fragn)
+{
+	int tail_len;
+	struct sk_buff *skb_dst;
+	skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
+	struct skb_shared_info *si = skb_shinfo(skb);
+
+	if (unlikely(off + len > skb_frag_size(frag))) {
+		net_warn_ratelimited("Attempt to delete too much\n");
+		return -EFAULT;
+	}
+
+	/* Fast path: delete a full fragment. */
+	if (unlikely(!off && len == skb_frag_size(frag))) {
+		ss_skb_adjust_data_len(skb, -len);
+		__skb_frag_unref(frag);
+		if (i + 1 < si->nr_frags)
+			memmove(&si->frags[i], &si->frags[i + 1],
+				(si->nr_frags - i - 1) * sizeof(skb_frag_t));
+		--si->nr_frags;
+		__it_next_data(skb, i, data, skb_ptr, fragn);
+		return 0;
+	}
+	/* Fast path (e.g. TLS header): delete the head part of a fragment. */
+	if (likely(!off)) {
+		frag->bv_offset += len;
+		skb_frag_size_sub(frag, len);
+		skb->len -= len;
+		skb->data_len -= len;
+		*data = skb_frag_address(frag);
+		*skb_ptr = skb;
+		return 0;
+	}
+	/* Fast path (e.g. TLS tag): delete the tail part of a fragment. */
+	if (likely(off + len == skb_frag_size(frag))) {
+		skb_frag_size_sub(frag, len);
+		skb->len -= len;
+		skb->data_len -= len;
+		__it_next_data(skb, i + 1, data, skb_ptr, fragn);
+		return 0;
+	}
+
+	/*
+	 * Delete data in the middle of a fragment. After the data
+	 * is deleted the fragment will contain only the head part,
+	 * and the tail part is moved to another fragment.
+	 * [frag @i] [frag @i+1 - tail data]
+	 *
+	 * Make room for a fragment right after the @i fragment
+	 * to move the tail part of data there.
+	 */
+	if (__extend_pgfrags(skb_head, skb, i + 1, 1))
+		return -EFAULT;
+
+	/* Find the SKB for tail data. */
+	skb_dst = (i < MAX_SKB_FRAGS - 1) ? skb : skb->next;
+
+	/* Calculate the length of the tail part. */
+	tail_len = skb_frag_size(frag) - off - len;
+
+	/* Make the fragment with the tail part. */
+	i = (i + 1) % MAX_SKB_FRAGS;
+	__skb_fill_page_desc(skb_dst, i, skb_frag_page(frag),
+			     frag->bv_offset + off + len, tail_len);
+	__skb_frag_ref(frag);
+
+	/* Trim the fragment with the head part. */
+	skb_frag_size_sub(frag, len + tail_len);
+
+	/* Adjust SKB data lengths. */
+	if (skb != skb_dst) {
+		ss_skb_adjust_data_len(skb, -tail_len);
+		ss_skb_adjust_data_len(skb_dst, tail_len);
+	}
+	skb->len -= len;
+	skb->data_len -= len;
+
+	/* Get the SKB and the address for data after the deleted data. */
+	it->data = skb_frag_address(&skb_shinfo(skb_dst)->frags[i]);
+	it->skb = skb_dst;
+	*fragn = i;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(__split_pgfrag_del_w_frag);
+
+/**
+ * Reverse operation to ss_skb_expand_head_tail(): chop @head and @tail bytes
+ * at head and end of the @skb.
+ */
+int
+ss_skb_chop_head_tail(struct sk_buff *skb_head, struct sk_buff *skb,
+		      size_t head, size_t trail)
+{
+	int n, r, i, _;
+	struct skb_shared_info *si = skb_shinfo(skb);
+	skb_frag_t *frag;
+	TfwStr it;
+
+	if (WARN_ON_ONCE(skb->len <= head + trail))
+		return -EINVAL;
+
+	n = min_t(int, skb_headlen(skb), head);
+	if (n) {
+		__skb_pull(skb, n);
+		head -= n;
+	}
+	while (head) {
+		frag = &skb_shinfo(skb)->frags[0];
+		n = min_t(int, skb_frag_size(frag), head);
+		r = __split_pgfrag_del_w_frag(skb_head, skb, 0, 0, n, &it, &_);
+		if (r)
+			return r;
+		head -= n;
+	}
+
+	while (trail && si->nr_frags) {
+		i = si->nr_frags - 1;
+		frag = &skb_shinfo(skb)->frags[i];
+		n = min_t(int, skb_frag_size(frag), trail);
+		r = __split_pgfrag_del_w_frag(skb_head, skb, i,
+					      skb_frag_size(frag) - n, n,
+					      &it, &_);
+		if (r)
+			return r;
+		trail -= n;
+	}
+	if (trail)
+		__skb_trim(skb, skb->len - trail);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(ss_skb_chop_head_tail);
+#endif
+

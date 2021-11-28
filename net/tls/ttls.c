@@ -117,7 +117,7 @@ ttls_aad2hdriv(TlsXfrm *xfrm, unsigned char *buf)
 	T_DBG3("write record hdr from AAD: type=%d ver=%d:%d hdr_len=%d\n",
 	       buf[0], buf[1], buf[2], ntohs(*(short *)(buf + 3)));
 }
-EXPORT_SYMBOL(ttls_aad2hdriv);
+EXPORT_SYMBOL_GPL(ttls_aad2hdriv);
 
 /**
  * Called to build crypto request with scatterlist acceptable by the crypto
@@ -242,7 +242,7 @@ ttls_register_callbacks(ttls_send_cb_t *send_cb, ttls_sni_cb_t *sni_cb,
 	ttls_hs_over_cb = hs_over_cb;
 	ttls_cli_id_cb = cli_id_cb;
 }
-EXPORT_SYMBOL(ttls_register_callbacks);
+EXPORT_SYMBOL_GPL(ttls_register_callbacks);
 
 /**
  * Returns true if handshake is fully processed.
@@ -252,7 +252,7 @@ ttls_hs_done(TlsCtx *tls)
 {
 	return tls->state == TTLS_HANDSHAKE_OVER;
 }
-EXPORT_SYMBOL(ttls_hs_done);
+EXPORT_SYMBOL_GPL(ttls_hs_done);
 
 /**
  * Whether TLS context transformation is ready for crypto and we should encrypt
@@ -268,7 +268,7 @@ ttls_xfrm_ready(TlsCtx *tls)
 	return tls->state >= TTLS_CLIENT_FINISHED
 	       && tls->state != TTLS_SERVER_CHANGE_CIPHER_SPEC;
 }
-EXPORT_SYMBOL(ttls_xfrm_ready);
+EXPORT_SYMBOL_GPL(ttls_xfrm_ready);
 
 /*
  * There are states in which encryption is not used or performed in advance, as
@@ -279,7 +279,7 @@ ttls_xfrm_need_encrypt(TlsCtx *tls)
 {
 	return ttls_xfrm_ready(tls) && tls->state != TTLS_SERVER_FINISHED;
 }
-EXPORT_SYMBOL(ttls_xfrm_need_encrypt);
+EXPORT_SYMBOL_GPL(ttls_xfrm_need_encrypt);
 
 /**
  * Client-side only.
@@ -850,7 +850,7 @@ err:
 
 	return r;
 }
-EXPORT_SYMBOL(ttls_encrypt);
+EXPORT_SYMBOL_GPL(ttls_encrypt);
 
 static int
 __ttls_decrypt(TlsCtx *tls, unsigned char *buf)
@@ -1866,7 +1866,7 @@ ttls_ctx_init(TlsCtx *tls, struct sock *sk, const TlsCfg *conf)
 
 	return 0;
 }
-EXPORT_SYMBOL(ttls_ctx_init);
+EXPORT_SYMBOL_GPL(ttls_ctx_init);
 
 /**
  * Set the certificate verification mode.
@@ -1945,7 +1945,7 @@ ttls_conf_own_cert(TlsPeerCfg *conf, TlsX509Crt *own_cert, TlsPkCtx *pk_key,
 
 	return 0;
 }
-EXPORT_SYMBOL(ttls_conf_own_cert);
+EXPORT_SYMBOL_GPL(ttls_conf_own_cert);
 
 /**
  * Configure Session tickets. Only for server side. Called in process context
@@ -1967,7 +1967,7 @@ ttls_conf_tickets(TlsPeerCfg *conf, bool enable, unsigned long lifetime,
 	return ttls_tickets_configure(conf, lifetime, secret_str, len,
 				      vhost_name, vn_len);
 }
-EXPORT_SYMBOL(ttls_conf_tickets);
+EXPORT_SYMBOL_GPL(ttls_conf_tickets);
 
 /**
  * Required if we need to verify client certificate.
@@ -2135,7 +2135,7 @@ ttls_handshake_step(TlsCtx *tls, unsigned char *buf, size_t len, size_t hh_len,
  * errors.
  * The function adds the number of bytes parsed in @buf to @read.
  */
-int
+static int
 ttls_recv(void *tls_data, unsigned char *buf, size_t len, unsigned int *read)
 {
 	int r;
@@ -2278,7 +2278,195 @@ out:
 
 	return r;
 }
-EXPORT_SYMBOL(ttls_recv);
+
+/**
+ * Chop skb list with the head at @skb by TLS extra data at the begin by
+ * TLS headers and at the end by TLS trailer. The skb list is a TLS record
+ * right after decryption, so we adjust the data pointers for the upper layers
+ * processing.
+ *
+ * @dec_payload references to the list of skbs containing the decrypted payload
+ * without TLS record overheads.
+ *
+ * TBD probably this function should be moved to the kernel TLS codebase.
+ */
+static int
+tls_chop_skb_rec(TlsCtx *tls, struct sk_buff *skb,
+		 struct sk_buff **dec_payload)
+{
+	int r;
+	size_t off = ttls_payload_off(&tls->xfrm);
+	size_t tail = TTLS_TAG_LEN;
+
+	while (unlikely(skb->len <= off)) {
+		struct sk_buff *skb_head = ss_skb_dequeue(&skb);
+		off -= skb_head->len;
+		__kfree_skb(skb_head);
+		if (WARN_ON_ONCE(!skb))
+			return -EIO;
+	}
+
+	*dec_payload = skb;
+
+	skb = (*dec_payload)->prev;
+	while (unlikely(skb->len <= tail)) {
+		tail -= skb->len;
+		ss_skb_unlink(dec_payload, skb);
+		if (WARN_ON_ONCE(!*dec_payload))
+			return -EIO;
+		__kfree_skb(skb);
+		skb = (*dec_payload)->prev;
+	}
+
+	if (unlikely(r = ss_skb_chop_head_tail(NULL, data->skb, off, 0)))
+		return r;
+
+	return ss_skb_chop_head_tail(NULL, data->skb->prev, 0, tail);
+}
+
+/**
+ * Process a TLS record:
+ * 1. execute the TLS handshake state machine internally
+ * 2. or call the application logic for established TLS connection.
+ *
+ * @return number of bytes processed or negative error code.
+ * Consume @skb on success.
+ *
+ * TODO instead of doing application logic here, fall back to kTLS and
+ * let the application code (probably from a workqueue) read from the
+ * socket and do the logic.
+ */
+int
+tls_process_skb(struct sock *sk, struct sk_buff *skb,
+		tls_app_process_cb_t app_process_cb)
+{
+	int r, parsed;
+	struct sk_buff *nskb = NULL;
+	TlsCtx *tls = sk->sk_user_data;
+
+	/*
+	 * Perform TLS handshake and decrypt the TLS message in-place by chunks.
+	 *
+	 * The @skb was just unlinked from the socket sk_receive_queue and now
+	 * we link it into our internal list io_in.skb_list. The list is
+	 * actually a completely assembled TLS record, maybe with the head of
+	 * the next TLS record. The assembled record may contain several upper
+	 * level (e.g. HTTP) messages, including the first or the last parts
+	 * of the message. Some of the messages may be retransmitted to another
+	 * socket and some of them can be locally consumed. This way we need
+	 * the separate list and can not just keep the skbs in the socket
+	 * sk_receive_queue.
+	 */
+next_msg:
+	spin_lock(&tls->lock);
+	ss_skb_queue_tail(&tls->io_in.skb_list, skb);
+
+	/* Call TLS layer to place skb into a TLS record on top of skb_list. */
+	parsed = 0;
+	r = ss_skb_process(skb, ttls_recv, tls, &tls->io_in.chunks, &parsed);
+	switch (r) {
+	default:
+		pr_warn("Unrecognized TLS receive return code -0x%X,"
+			" drop packet\n", -r);
+		fallthrough;
+	case -EPROTO:
+		spin_unlock(&tls->lock);
+		if (!ttls_hs_done(tls))
+			tfw_tls_hs_over(tls, TTLS_HS_CB_INCOMPLETE);
+		/* The skb is freed in tfw_tls_conn_dtor(). */
+		return r;
+	case -EAGAIN:
+		/* No complete TLS record seen yet. */
+		spin_unlock(&tls->lock);
+		return TFW_PASS;
+	case 0:
+		/* A complete TLS record is received. */
+		pr_info("%s: parsed=%d skb->len=%u\n", __func__,
+		       parsed, skb->len);
+		break;
+	}
+
+	/*
+	 * Possibly there are other TLS message in the @skb - create
+	 * an skb sibling and process it on the next iteration.
+	 * If a part of incomplete TLS message leaves at the end of the
+	 * @skb, then store the skb in the TLS context for next FSM
+	 * shot.
+	 *
+	 * Many sibling skbs can be produced by TLS and application layers
+	 * together.
+	 *
+	 * TBD at the moment if @skb contains the tail of one TLS recodrd and
+	 * the head of another record (or maybe a full record), then we split
+	 * the skb and let the application layer to consume the skb.
+	 * Alternate approach is to call the application layer with length
+	 * and offset for the skb and just reference count the skb.
+	 *
+	 * TODO #391 can we get rid of the splitting?
+	 */
+	if (parsed < skb->len) {
+		nskb = ss_skb_split(skb, parsed);
+		if (unlikely(!nskb)) {
+			spin_unlock(&tls->lock);
+			TFW_INC_STAT_BH(clnt.msgs_otherr);
+			return T_DROP;
+		}
+	}
+
+	if (tls->io_in.msgtype == TTLS_MSG_APPLICATION_DATA) {
+		struct sk_buff *dec_app_data;
+
+		/*
+		 * Current record contains an "application data" message.
+		 * ttls_recv() has already decrypted the payload, but TLS
+		 * overhead data are still attached. We need to cut them off.
+		 *
+		 * Pass tls->io_in.skb_list to data_up ownership for the upper
+		 * layer processing.
+		 *
+		 * TODO we should not be here. This code must be handled by
+		 * kTLS once handshake completes. We should call setsockopt()
+		 * and pass the connection to kTLS. ...or this alternate
+		 * workflow encrypts/decrypts TLS records in softirq context,
+		 * which at least forms better TLS records on transmit path.
+		 */
+		r = tfw_tls_chop_skb_rec(tls, tls->io_in.skb_list,
+					 &dec_app_data);
+		if (r) {
+			spin_unlock(&tls->lock);
+			return r;
+		}
+		ttls_reset_io_ctx(&tls->io_in);
+		spin_unlock(&tls->lock);
+
+		if ((r = app_process_cb(sk, dec_app_data))) {
+			kfree_skb(nskb);
+			return r;
+		}
+	} else {
+		struct sk_buff *tmp;
+
+		/*
+		 * The decrypted payload is not required for upper levels.
+		 * Lifetime of skbs in input contexts ends here, purge
+		 * the ingress skb list.
+		 */
+		while ((tmp = ss_skb_dequeue(&tls->io_in.skb_list)))
+			kfree_skb(tmp);
+		ttls_reset_io_ctx(io);
+
+		spin_unlock(&tls->lock);
+	}
+
+	if (nskb) {
+		skb = nskb;
+		nskb = NULL;
+		goto next_msg;
+	}
+
+	return r;
+}
+EXPORT_SYMBOL_GPL(tls_process_skb);
 
 /**
  * Notify the peer that the connection is being closed.
@@ -2294,7 +2482,7 @@ ttls_close_notify(TlsCtx *tls)
 	return ttls_send_alert(tls, TTLS_ALERT_LEVEL_WARNING,
 			       TTLS_ALERT_MSG_CLOSE_NOTIFY);
 }
-EXPORT_SYMBOL(ttls_close_notify);
+EXPORT_SYMBOL_GPL(ttls_close_notify);
 
 void
 ttls_key_cert_free(TlsKeyCert *key_cert)
@@ -2307,7 +2495,7 @@ ttls_key_cert_free(TlsKeyCert *key_cert)
 		cur = next;
 	}
 }
-EXPORT_SYMBOL(ttls_key_cert_free);
+EXPORT_SYMBOL_GPL(ttls_key_cert_free);
 
 void
 ttls_ctx_clear(TlsCtx *tls)
@@ -2322,14 +2510,14 @@ ttls_ctx_clear(TlsCtx *tls)
 
 	memset(tls, 0, sizeof(TlsCtx));
 }
-EXPORT_SYMBOL(ttls_ctx_clear);
+EXPORT_SYMBOL_GPL(ttls_ctx_clear);
 
 void
 ttls_config_init(TlsCfg *conf)
 {
 	memset(conf, 0, sizeof(TlsCfg));
 }
-EXPORT_SYMBOL(ttls_config_init);
+EXPORT_SYMBOL_GPL(ttls_config_init);
 
 static int ttls_default_ciphersuites[] = {
 	/* All AES-128 ephemeral suites */
@@ -2372,7 +2560,7 @@ ttls_config_defaults(TlsCfg *conf, int endpoint)
 
 	return 0;
 }
-EXPORT_SYMBOL(ttls_config_defaults);
+EXPORT_SYMBOL_GPL(ttls_config_defaults);
 
 int
 ttls_config_peer_defaults(TlsPeerCfg *conf, int endpoint)
@@ -2389,7 +2577,7 @@ ttls_config_peer_defaults(TlsPeerCfg *conf, int endpoint)
 
 	return 0;
 }
-EXPORT_SYMBOL(ttls_config_peer_defaults);
+EXPORT_SYMBOL_GPL(ttls_config_peer_defaults);
 
 void
 ttls_config_free(TlsCfg *conf)
@@ -2397,7 +2585,7 @@ ttls_config_free(TlsCfg *conf)
 	/* Called in process context for relatively small memory area. */
 	memset(conf, 0, sizeof(TlsCfg));
 }
-EXPORT_SYMBOL(ttls_config_free);
+EXPORT_SYMBOL_GPL(ttls_config_free);
 
 void
 ttls_config_peer_free(TlsPeerCfg *conf)
@@ -2407,7 +2595,7 @@ ttls_config_peer_free(TlsPeerCfg *conf)
 	/* Called in process context for relatively small memory area. */
 	memset(conf, 0, sizeof(TlsPeerCfg));
 }
-EXPORT_SYMBOL(ttls_config_peer_free);
+EXPORT_SYMBOL_GPL(ttls_config_peer_free);
 
 unsigned char
 ttls_sig_from_pk_alg(ttls_pk_type_t type)
