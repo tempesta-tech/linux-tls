@@ -565,7 +565,7 @@ typedef struct ttls_context {
 	char			*hostname;
 } TlsCtx;
 
-typedef int ttls_send_cb_t(TlsCtx *tls, struct sg_table *sgt);
+typedef int ttls_send_cb_t(TlsCtx *tls);
 typedef int ttls_sni_cb_t(TlsCtx *tls, const unsigned char *data, size_t len);
 typedef unsigned long ttls_cli_id_t(TlsCtx *tls, unsigned long hash);
 typedef int tls_app_process_cb_t(struct sock *sk, struct sk_buff *skb);

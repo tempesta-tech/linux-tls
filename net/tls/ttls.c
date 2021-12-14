@@ -225,26 +225,6 @@ ttls_skb_extract_alert(TlsIOCtx *io, TlsXfrm *xfrm)
 }
 
 /**
- * Register I/O callbacks from the underlying network layer.
- *
- * @ttls_sni_cb		- accepts an SNI string from the TLS layer and looks
- *			  up for for an available host name at the application
- *			  (caller) level.
- * @ttls_hs_over_cb	- callback called on completed TLS handshakes,
- *			  typically used by a rate limiting logic.
- */
-void
-ttls_register_callbacks(ttls_send_cb_t *send_cb, ttls_sni_cb_t *sni_cb,
-			ttls_hs_over_cb_t *hs_over_cb, ttls_cli_id_t *cli_id_cb)
-{
-	ttls_send_cb = send_cb;
-	ttls_sni_cb = sni_cb;
-	ttls_hs_over_cb = hs_over_cb;
-	ttls_cli_id_cb = cli_id_cb;
-}
-EXPORT_SYMBOL_GPL(ttls_register_callbacks);
-
-/**
  * Returns true if handshake is fully processed.
  */
 bool
@@ -1028,12 +1008,125 @@ __ttls_add_record(TlsCtx *tls, struct sg_table *sgt, int sg_i,
 			       hdr_buf ? : io->hdr);
 }
 
+/**
+ * The default implementation for the ttls_send_cb() callback.
+ * The callback is used for the TLS transmission downcall, when TLS initiates
+ * transmission, e.g. to send a TLS alert or a handshake record. This is
+ * opposite to the transmission upcall, which is called when TCP is ready
+ * to transmit encrypted application data.
+ */
+static int
+tls_sock_send(TlsCtx *tls)
+{
+	struct sock *sk = tls->sk;
+	struct tcp_sock *tp = tcp_sk(sk);
+	int size, mss = tcp_send_mss(sk, &size, MSG_DONTWAIT);
+	struct sk_buff *skb;
+
+	while ((skb = ss_skb_dequeue(&tls->io_out.skb_list))) {
+		if (WARN_ON_ONCE(!skb->len)) {
+			kfree_skb(skb);
+			continue;
+		}
+
+		sk_forced_mem_schedule(sk, skb->truesize);
+		skb_entail(sk, skb);
+
+		tp->write_seq += skb->len;
+		TCP_SKB_CB(skb)->end_seq += skb->len;
+	}
+
+	tcp_push(sk, MSG_DONTWAIT, mss, TCP_NAGLE_OFF|TCP_NAGLE_PUSH, size);
+}
+
+static int
+tls_send(TlsCtx *tls, struct sg_table *sgt)
+{
+	int r;
+	size_t len;
+	char *data;
+	struct sk_buff *skb;
+	TlsIOCtx *io = &tls->io_out;
+	bool need_encrypt = ttls_xfrm_need_encrypt(tls);
+
+	assert_spin_locked(&tls->lock);
+
+	/*
+	 * Encrypted (application data) messages will be prepended by a header
+	 * in tfw_tls_encrypt(), so if we have an encryption context, then we
+	 * don't send the header. Otherwise (handshake message) copy the whole
+	 * data with a header.
+	 *
+	 * During handshake (!ttls_xfrm_ready(tls)), io may contain several
+	 * consequent records of the same TTLS_MSG_HANDSHAKE type. io, except
+	 * msglen containing length of the last record, describes the first
+	 * record.
+	 */
+	if (ttls_xfrm_ready(tls) && io->msgtype == TTLS_MSG_ALERT) {
+		data = io->alert;
+		len = io->hslen;
+	} else {
+		data = io->hdr;
+		len = TLS_HEADER_SIZE + io->hslen;
+	}
+	T_DBG("TLS %lu bytes +%u segments (%u bytes, last msgtype %#x)"
+	      " are to be sent on sk=%pK/sk_write_xmit=%pK ready=%d\n",
+	      len, sgt ? sgt->nents : 0, io->msglen, io->msgtype, sk,
+	      sk->sk_write_xmit, ttls_xfrm_ready(tls));
+
+	skb = alloc_skb(MAX_TCP_HEADER + len, GFP_ATOMIC);
+	if (!skb)
+		return NULL;
+	skb_reserve(skb, MAX_TCP_HEADER);
+	if (need_encrypt)
+		tls_skb_settype(skb, io->msgtype);
+	ss_skb_queue_tail(&io->skb_list, skb);
+
+	BUG_ON(len > skb_headlen(skb));
+
+	if ((r = skb_store_bits(skb, 0, data, len)))
+		goto err;
+
+	if (sgt) {
+		int f, i = 0;
+		struct scatterlist *sg;
+
+		for_each_sg(sgt->sgl, sg, sgt->nents, f) {
+			if (i >= MAX_SKB_FRAGS) {
+				skb = alloc_skb(MAX_TCP_HEADER, GFP_ATOMIC);
+				if (!skb)
+					goto err;
+				skb_reserve(skb, MAX_TCP_HEADER);
+				if (need_encrypt)
+					tls_skb_settype(skb, io->msgtype);
+				ss_skb_queue_tail(&io->skb_list, skb);
+				i = 0;
+			}
+			skb_fill_page_desc(skb, i++, sg_page(sg), sg->offset,
+					   sg->length);
+			ss_skb_adjust_data_len(skb, sg->length);
+			T_DBG3("fill skb frag %d by %pK,len=%u,flags=%lx in"
+			       " skb=%pK,len=%u\n", i,
+			       sg_virt(sg), sg->length, sg->page_link & 0x3,
+			       skb, skb->len);
+		}
+	}
+
+	if (!(r = ttls_send_cb(tls)))
+		return 0;
+err:
+	while ((skb = ss_skb_dequeue(&io->skb_list)))
+		kfree_skb(skb);
+	ttls_reset_io_ctx(io);
+	return r;
+}
+
 int
 __ttls_send_record(TlsCtx *tls, struct sg_table *sgt)
 {
 	int r;
 
-	if ((r = ttls_send_cb(tls, sgt)))
+	if ((r = tls_send(tls, sgt)))
 		T_DBG("TLS send callback error %d\n", r);
 	return r;
 }
@@ -2596,6 +2689,31 @@ ttls_config_peer_free(TlsPeerCfg *conf)
 	memset(conf, 0, sizeof(TlsPeerCfg));
 }
 EXPORT_SYMBOL_GPL(ttls_config_peer_free);
+
+/**
+ * Register I/O callbacks from the underlying network layer.
+ *
+ * @ttls_send_cb_t	- tls_sock_send() by default. The callback may accept
+ *			  a send implementation which routes the TCP specific
+ *			  sending code to the CPU owning the socket.
+ * @ttls_sni_cb		- accepts an SNI string from the TLS layer and looks
+ *			  up for for an available host name at the application
+ *			  (caller) level.
+ * @ttls_hs_over_cb	- callback called on completed TLS handshakes,
+ *			  typically used by a rate limiting logic.
+ * @cli_id_cb		- TLS client ID computation callback, used by TLS
+ *			  tickets.
+ */
+void
+ttls_register_callbacks(ttls_send_cb_t *send_cb, ttls_sni_cb_t *sni_cb,
+			ttls_hs_over_cb_t *hs_over_cb, ttls_cli_id_t *cli_id_cb)
+{
+	ttls_send_cb = send_cb ? : tls_sock_send;
+	ttls_sni_cb = sni_cb;
+	ttls_hs_over_cb = hs_over_cb;
+	ttls_cli_id_cb = cli_id_cb;
+}
+EXPORT_SYMBOL_GPL(ttls_register_callbacks);
 
 unsigned char
 ttls_sig_from_pk_alg(ttls_pk_type_t type)
