@@ -583,8 +583,10 @@ bool ttls_xfrm_need_encrypt(TlsCtx *tls);
 void ttls_write_hshdr(unsigned char type, unsigned char *buf,
 		      unsigned short len);
 void *ttls_alloc_crypto_req(unsigned int extra_size, unsigned int *rsz);
-void ttls_register_callbacks(ttls_send_cb_t *send_cb, ttls_sni_cb_t *sni_cb,
-			     ttls_hs_over_cb_t *hs_over_cb, ttls_cli_id_t *cli_id_cb);
+void ttls_register_callbacks(size_t sk_off_udata, ttls_send_cb_t *send_cb,
+			     ttls_sni_cb_t *sni_cb,
+			     ttls_hs_over_cb_t *hs_over_cb,
+			     ttls_cli_id_t *cli_id_cb);
 
 const char *ttls_get_ciphersuite_name(const int ciphersuite_id);
 
@@ -610,7 +612,7 @@ int ttls_get_session(const TlsCtx *ssl, TlsSess *session);
 
 int tls_process_skb(struct sock *sk, struct sk_buff *skb,
 		    tls_app_process_cb_t app_process_cb)
-int ttls_encrypt(TlsCtx *tls, struct sg_table *sgt, struct sg_table *out_sgt);
+int tls_encrypt(struct sock *sk, struct sk_buff *skb, unsigned int limit);
 
 int ttls_send_alert(TlsCtx *tls, unsigned char lvl, unsigned char msg);
 int ttls_close_notify(TlsCtx *tls);
